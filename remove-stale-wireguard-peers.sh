@@ -49,7 +49,8 @@ if (( ${#client_configs[@]} == 0 )); then
 fi
 
 umask 077
-temporary_config=$(mktemp /etc/wireguard/.wg0.conf.XXXXXX)
+temporary_config=$(mktemp --suffix=.conf /etc/wireguard/wg0cXXXXXX)
+temporary_interface_config=${temporary_config##*/}
 stripped_config=$(mktemp /etc/wireguard/.wg0.strip.XXXXXX)
 peer_keys_file=
 orphan_keys_file=
@@ -71,7 +72,7 @@ cleanup() {
     rm -f -- "$orphan_keys_file"
   fi
   if [[ $runtime_updated == true && $committed != true ]]; then
-    if wg-quick strip "$server_config" > "$stripped_config" &&
+    if wg-quick strip "$interface" > "$stripped_config" &&
       wg syncconf "$interface" "$stripped_config"; then
       printf 'Restored the running interface from the unchanged server config.\n' >&2
     else
@@ -241,7 +242,7 @@ chmod 600 "$temporary_config"
 backup_config=$(mktemp /etc/wireguard/wg0.conf.backup.XXXXXX)
 cp -p "$server_config" "$backup_config"
 
-if ! wg-quick strip "$temporary_config" > "$stripped_config"; then
+if ! wg-quick strip "$temporary_interface_config" > "$stripped_config"; then
   printf 'Could not prepare the updated running WireGuard config; no peers were changed.\n' >&2
   exit 1
 fi
