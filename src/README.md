@@ -26,7 +26,7 @@ services:
       target: builder
     ...
   db:
-    image: postgres
+    image: postgres:17
     ...
   proxy:
     image: nginx
@@ -48,8 +48,8 @@ Make sure port 80 on the host is not already being in use.
 ```shell
 $ docker compose up -d
 Creating network "nginx-golang-postgres_default" with the default driver
-Pulling db (postgres:)...
-latest: Pulling from library/postgres
+Pulling db (postgres:17)...
+17: Pulling from library/postgres
 ...
 Successfully built 5f7c899f9b49
 Successfully tagged nginx-golang-postgres_proxy:latest
@@ -80,3 +80,16 @@ Stop and remove the containers
 ```shell
 $ docker compose down
 ```
+
+## PostgreSQL data volume and upgrades
+
+The database image is pinned to PostgreSQL 17 and the named volume remains mounted at
+`/var/lib/postgresql/data`. This avoids an accidental major-version upgrade when
+pulling `postgres:latest` and preserves compatibility with an existing PostgreSQL 17
+data volume.
+
+Do not change the image to PostgreSQL 18 or newer while keeping this volume mount.
+PostgreSQL 18 uses a version-specific data directory and a different recommended
+mount point. A major-version upgrade requires a planned database migration (for
+example, `pg_upgrade` or a dump/restore); changing the image tag or mount path alone
+does not migrate the database. Keep a verified backup before upgrading.
