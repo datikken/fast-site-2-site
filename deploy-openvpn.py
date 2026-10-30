@@ -131,7 +131,6 @@ def issue_certificate(name: str, cert_type: str) -> None:
         "build-server-full" if cert_type == "server" else "build-client-full",
         name,
         "nopass",
-        common_name=name,
     )
 
 
