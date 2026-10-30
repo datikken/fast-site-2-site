@@ -247,6 +247,7 @@ trap cleanup EXIT
 cp -p "$server_config" "$temporary_config"
 cat >> "$temporary_config" <<EOF
 
+# Client: $client_name
 [Peer]
 PublicKey = $client_public_key
 AllowedIPs = $client_ip/32
