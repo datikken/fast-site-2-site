@@ -155,6 +155,29 @@ def select_openvpn_service() -> tuple[str, Path]:
     fail("Could not find an OpenVPN systemd service template.")
 
 
+def restart_openvpn_service(service: str) -> None:
+    result = subprocess.run(
+        ["systemctl", "restart", service], capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return
+
+    print(f"ERROR: systemctl restart {service} failed.", file=sys.stderr)
+    if result.stdout.strip():
+        print(result.stdout.strip(), file=sys.stderr)
+    if result.stderr.strip():
+        print(result.stderr.strip(), file=sys.stderr)
+    for command in (
+        ["systemctl", "status", "--no-pager", "--full", service],
+        ["journalctl", "-u", service, "-n", "40", "--no-pager"],
+    ):
+        diagnostic = subprocess.run(command, capture_output=True, text=True)
+        output = diagnostic.stdout.strip() or diagnostic.stderr.strip()
+        if output:
+            print(output, file=sys.stderr)
+    raise SystemExit(result.returncode)
+
+
 def main() -> None:
     if os.geteuid() != 0:
         fail(f"Run this script as root: sudo python3 {Path(__file__).name}")
@@ -245,7 +268,7 @@ def main() -> None:
 proto udp4
 dev tun0
 topology subnet
-server {DEFAULT_TUNNEL.network_address} {DEFAULT_TUNNEL.netmask}
+server {DEFAULT_TUNNEL.network_address} {DEFAULT_TUNNEL.netmask} nopool
 ifconfig-pool 10.77.0.10 10.77.0.254 255.255.255.0
 client-config-dir {ccd_dir}
 client-to-client
@@ -314,7 +337,7 @@ verb 3
         print(f"Created client profile: {client_profile}")
 
     run(["systemctl", "enable", openvpn_service])
-    run(["systemctl", "restart", openvpn_service])
+    restart_openvpn_service(openvpn_service)
     if shutil.which("ufw") and subprocess.run(
         ["ufw", "status"], capture_output=True, text=True, check=True
     ).stdout.startswith("Status: active"):
