@@ -116,7 +116,7 @@ python .\ovpn_to_rsc.py .\downl\mikrotik-a.ovpn --site a \
 
 ```routeros
 /file print
-/import file-name=mikrotik-a.rsc
+/import file-name=mikrotik-b.rsc
 ```
 
 На MikroTik B импортируйте `mikrotik-b.rsc`. Если LAN-сети отличаются от значений по умолчанию, укажите фактические сети через `--local-network` и `--remote-network`.
