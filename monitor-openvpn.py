@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import shutil
 import subprocess
 import sys
 import time
@@ -135,50 +136,101 @@ def format_bytes(value: int) -> str:
     return f"{value} B"
 
 
+def render_table(clients: dict[str, Client]) -> str:
+    rows = []
+    for common_name, label in EXPECTED_CLIENTS.items():
+        client = clients.get(common_name)
+        if client is None:
+            rows.append((label, "OFFLINE", "-", "-", "-", "-", "-"))
+        else:
+            rows.append(
+                (
+                    label,
+                    "ONLINE",
+                    client.virtual_address,
+                    client.real_address,
+                    client.connected_since,
+                    format_bytes(client.bytes_received),
+                    format_bytes(client.bytes_sent),
+                )
+            )
+
+    for common_name, client in clients.items():
+        if common_name not in EXPECTED_CLIENTS:
+            rows.append(
+                (
+                    common_name,
+                    "ONLINE",
+                    client.virtual_address,
+                    client.real_address,
+                    client.connected_since,
+                    format_bytes(client.bytes_received),
+                    format_bytes(client.bytes_sent),
+                )
+            )
+
+    headers = ("CLIENT", "STATUS", "VPN IP", "REMOTE ADDRESS", "CONNECTED SINCE", "RECEIVED", "SENT")
+    widths = [
+        max(len(header), *(len(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+    terminal_width = shutil.get_terminal_size((120, 24)).columns
+    max_remote_width = max(18, terminal_width - sum(widths) + widths[3] - 8)
+    widths[3] = min(widths[3], max_remote_width, 32)
+    rows = [
+        tuple(value if len(value) <= widths[index] else value[: widths[index] - 1] + "…" for index, value in enumerate(row))
+        for row in rows
+    ]
+
+    def format_row(values: tuple[str, ...]) -> str:
+        return "  " + "  ".join(value.ljust(widths[index]) for index, value in enumerate(values))
+
+    separator = "  " + "  ".join("-" * width for width in widths)
+    return "\n".join((format_row(headers), separator, *(format_row(row) for row in rows)))
+
+
 def monitor_once(status_file: Path, service_override: str | None) -> bool:
     service, state = find_service(service_override)
     service_label = service or service_override or "OpenVPN systemd unit"
     active = state == "active"
-    print(f"OpenVPN service: {'ACTIVE' if active else state.upper()} ({service_label})")
 
     try:
         contents = status_file.read_text(encoding="utf-8")
-        modified = datetime.fromtimestamp(status_file.stat().st_mtime).astimezone()
+        modified_timestamp = status_file.stat().st_mtime
     except OSError as error:
-        print(f"Status file: unavailable ({error})")
+        print(f"OpenVPN service: {'ACTIVE' if active else state.upper()} ({service_label})")
+        print(f"Status file unavailable: {error}")
         return False
 
-    age_seconds = max(0, int(time.time() - status_file.stat().st_mtime))
-    print(f"Status file: {status_file} (updated {modified:%Y-%m-%d %H:%M:%S %Z}, {age_seconds}s ago)")
+    modified = datetime.fromtimestamp(modified_timestamp).astimezone()
+    age_seconds = max(0, int(time.time() - modified_timestamp))
     clients = parse_clients(contents)
 
-    for common_name, label in EXPECTED_CLIENTS.items():
-        client = clients.get(common_name)
-        if client is None:
-            print(f"{label}: DISCONNECTED")
-            continue
-        print(
-            f"{label}: CONNECTED"
-            f" | tunnel IP {client.virtual_address}"
-            f" | remote {client.real_address}"
-            f" | since {client.connected_since}"
-            f" | received {format_bytes(client.bytes_received)}"
-            f" | sent {format_bytes(client.bytes_sent)}"
-        )
-
-    for common_name, client in clients.items():
-        if common_name not in EXPECTED_CLIENTS:
-            print(
-                f"Other client {common_name}: CONNECTED"
-                f" | tunnel IP {client.virtual_address}"
-                f" | remote {client.real_address}"
-                f" | received {format_bytes(client.bytes_received)}"
-                f" | sent {format_bytes(client.bytes_sent)}"
-            )
-
+    print(f"OpenVPN service: {'ACTIVE' if active else state.upper()} ({service_label})")
+    print(
+        f"Status updated: {modified:%Y-%m-%d %H:%M:%S %Z} "
+        f"({age_seconds}s ago) | Connected clients: {len(clients)}"
+    )
+    print(render_table(clients))
     if age_seconds > 120:
         print("WARNING: status file is stale; check the OpenVPN service and status configuration.")
     return active
+
+
+def watch(status_file: Path, service: str | None, interval: int) -> int:
+    try:
+        while True:
+            if sys.stdout.isatty():
+                sys.stdout.write("\033[2J\033[H")
+            else:
+                print()
+            print(f"OpenVPN monitor | {datetime.now().astimezone():%Y-%m-%d %H:%M:%S %Z}")
+            print("Press Ctrl+C to exit.\n")
+            monitor_once(status_file, service)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\nMonitor stopped.")
+    return 0
 
 
 def main() -> int:
@@ -198,24 +250,36 @@ def main() -> int:
     parser.add_argument(
         "--watch",
         type=int,
+        nargs="?",
+        const=5,
         metavar="SECONDS",
-        help="refresh the status repeatedly at this interval",
+        help="refresh continuously (default interval: 5 seconds; optionally provide seconds)",
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=5,
+        metavar="SECONDS",
+        help="refresh interval for continuous monitoring (default: 5)",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="show one status table and exit instead of monitoring continuously",
     )
     args = parser.parse_args()
-    if args.watch is not None and args.watch < 1:
-        parser.error("--watch interval must be a positive number of seconds")
+    interval = args.watch if args.watch is not None else args.interval
+    if interval < 1:
+        parser.error("refresh interval must be a positive number of seconds")
+    if args.watch is not None and args.interval != 5:
+        parser.error("use either --watch SECONDS or --interval SECONDS, not both")
+    if args.once and args.watch is not None:
+        parser.error("--once cannot be combined with --watch")
 
-    if args.watch is None:
+    if args.once:
         return 0 if monitor_once(args.status_file, args.service) else 1
 
-    try:
-        while True:
-            print(f"\n--- {datetime.now().astimezone():%Y-%m-%d %H:%M:%S %Z} ---")
-            monitor_once(args.status_file, args.service)
-            time.sleep(args.watch)
-    except KeyboardInterrupt:
-        print("\nStopped.")
-    return 0
+    return watch(args.status_file, args.service, interval)
 
 
 if __name__ == "__main__":

@@ -57,19 +57,20 @@ sudo cat /var/log/openvpn-status-server.log
 
 Если в системе используется другой systemd unit, скрипт выбирает обнаруженный шаблон службы, а точное имя выводит после настройки.
 
-Для краткого отчёта о службе и клиентах используйте монитор:
+Монитор по умолчанию непрерывно обновляет таблицу состояния каждые 5 секунд. Остановить его можно через `Ctrl+C`:
 
 ```bash
 sudo python3 monitor-openvpn.py
 ```
 
-Для периодического обновления раз в 10 секунд:
+Изменить интервал обновления или вывести один отчёт:
 
 ```bash
-sudo python3 monitor-openvpn.py --watch 10
+sudo python3 monitor-openvpn.py --interval 10
+sudo python3 monitor-openvpn.py --once
 ```
 
-Монитор показывает состояние systemd-службы, время обновления status-файла, подключение `mikrotik-a`, `mikrotik-b` и `windows-client`, адреса и счётчики трафика. По умолчанию используется `/var/log/openvpn-status-server.log`; для другого пути укажите `--status-file`.
+Монитор показывает состояние systemd-службы, время обновления status-файла и таблицу подключений `mikrotik-a`, `mikrotik-b`, `windows-client` и других клиентов с адресами и счётчиками трафика. Для другого status-файла укажите `--status-file`.
 
 ### Подключить Windows-клиент
 
