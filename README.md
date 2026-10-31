@@ -82,27 +82,27 @@ sudo python3 monitor-openvpn.py --once
 
 Запустите конвертер на компьютере, где доступен соответствующий `.ovpn`-профиль.
 
-Для MikroTik A:
+Сгенерируйте `.rsc` для обоих MikroTik из профилей в `downl`. Команды ниже также копируют соответствующие `.ovpn` в `build`, рядом с `.rsc`:
 
-```bash
-python3 ovpn_to_rsc.py mikrotik-a.ovpn --site a
+```powershell
+python .\ovpn_to_rsc.py .\downl\mikrotik-a.ovpn --site a --output .\build\mikrotik-a.rsc --force
+python .\ovpn_to_rsc.py .\downl\mikrotik-b.ovpn --site b --output .\build\mikrotik-b.rsc --force
+Copy-Item .\downl\windows.ovpn .\build\windows.ovpn -Force
 ```
 
-Для MikroTik B:
+Для повторной генерации после изменения конвертера используйте те же команды. `--force` разрешает перезапись файлов в `build`; исходные профили в `downl` не меняются. В результате в `build` будут `mikrotik-a.rsc`, `mikrotik-a.ovpn`, `mikrotik-b.rsc`, `mikrotik-b.ovpn` и `windows.ovpn`. Каталог `build` исключён из Git, потому что `.ovpn` содержит приватные ключи.
 
-```bash
-python3 ovpn_to_rsc.py mikrotik-b.ovpn --site b
-```
+По умолчанию без `--output` конвертер создаёт `.rsc` рядом с исходным `.ovpn`. В `.rsc` будут команды для встроенного импорта OVPN-профиля, настройки интерфейса, маршрутов к удалённой LAN и VPN-подсети, исключений source NAT и правил forwarding между локальной LAN и удалённой LAN, а также Windows-клиентами в VPN-подсети.
 
-По умолчанию конвертер создаёт `.rsc` рядом с `.ovpn`. В `.rsc` будут команды для встроенного импорта OVPN-профиля, настройки интерфейса, маршрутов к удалённой LAN и VPN-подсети, исключений source NAT и правил forwarding между локальной LAN и удалённой LAN, а также Windows-клиентами в VPN-подсети.
+После импорта конвертер находит именно новый OVPN-интерфейс по его ID, а не предполагает, что он последний в списке. Затем он задаёт имя и проверяет, что импортированный интерфейс использует UDP.
 
 Конвертер проверяет, что профиль содержит ровно один `remote`, использует UDP/IPv4 и TUN, а сертификаты и ключ находятся во встроенных блоках `<ca>`, `<cert>` и `<key>`. TCP, TAP, несколько `remote` и отдельные файлы сертификатов не поддерживаются.
 
 Дополнительные параметры:
 
 ```bash
-python3 ovpn_to_rsc.py downl/mikrotik-a.ovpn --site a \
-  --output mikrotik-a.rsc \
+python .\ovpn_to_rsc.py .\downl\mikrotik-a.ovpn --site a \
+  --output .\build\mikrotik-a.rsc --force \
   --local-network 192.168.10.0/24 \
   --remote-network 192.168.20.0/24 \
   --interface ovpn-vds-a
@@ -121,9 +121,49 @@ python3 ovpn_to_rsc.py downl/mikrotik-a.ovpn --site a \
 
 На MikroTik B импортируйте `mikrotik-b.rsc`. Если LAN-сети отличаются от значений по умолчанию, укажите фактические сети через `--local-network` и `--remote-network`.
 
+Если интерфейс с выбранным именем уже существует, скрипт остановится, чтобы не создавать дубли. При повторной установке сначала проверьте его и удалите только прежний интерфейс этого подключения:
+
+```routeros
+/interface ovpn-client print detail
+/interface ovpn-client remove [find where name="ovpn-vds-a"]
+```
+
+Для MikroTik B замените имя на `ovpn-vds-b`.
+
 Если импорт остановился на строке `/interface/ovpn-client/import-ovpn-configuration` с ошибкой `input does not match any value of file-name`, RouterOS не нашёл `.ovpn`, имя которого указано в `.rsc`. Загрузите соответствующий профиль в **Files** и убедитесь, что имя совпадает точно (например, `mikrotik-a.ovpn` для профиля A). Сгенерированный скрипт также проверяет наличие профиля перед импортом и выводит ожидаемое имя файла.
 
 После импорта проверьте состояние интерфейса OVPN и таблицу маршрутизации. Для связи устройств между LAN должны быть подключены оба MikroTik; один роутер позволяет проверить только подключение к VDS.
+
+### Проверить подключение MikroTik к VDS
+
+На MikroTik A выполните:
+
+```routeros
+/interface ovpn-client print detail where name="ovpn-vds-a"
+/interface ovpn-client monitor [find where name="ovpn-vds-a"] once
+```
+
+Для MikroTik B замените `ovpn-vds-a` на `ovpn-vds-b`. `status: link established` означает, что OVPN-соединение с VDS установлено. Также интерфейс обычно отмечен флагом `R` (running). Если подключение не установлено, посмотрите журнал:
+
+```routeros
+/log print where topics~"ovpn"
+```
+
+Чтобы проверить, видит ли VDS клиента, запустите на VDS монитор:
+
+```bash
+sudo python3 monitor-openvpn.py --once
+```
+
+В отчёте соответствующий MikroTik должен иметь статус `ONLINE`. Если имя интерфейса показывает `link established`, но монитор не видит клиента, проверьте, что на устройстве используется профиль именно этого роутера (`mikrotik-a.ovpn` для A, `mikrotik-b.ovpn` для B), а не Windows-профиль или профиль второго MikroTik.
+
+`link established` подтверждает только подключение к VPN-серверу. Для проверки доступа к удалённой LAN дополнительно пропингуйте доступный адрес в ней, например с A:
+
+```routeros
+/ping 192.168.20.1 count=5
+```
+
+Подставьте адрес реально существующего устройства в удалённой сети; для проверки связи между площадками второй MikroTik тоже должен быть подключён.
 
 ## Ограничения и безопасность
 

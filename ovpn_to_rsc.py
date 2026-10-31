@@ -140,13 +140,27 @@ def build_script(
 :if ([:len [/file find where name=$sourceFile]] = 0) do={{ :error ("Missing OVPN profile in Files: " . $sourceFile . ". Upload it using this exact filename, then retry.") }}
 :local existing [/interface ovpn-client find where name=$interfaceName]
 :if ([:len $existing] > 0) do={{ :error ("OVPN interface already exists: " . $interfaceName) }}
-:local oldCount [:len [/interface ovpn-client find]]
+:local oldClients [/interface ovpn-client find]
 /interface ovpn-client import-ovpn-configuration file-name=$sourceFile ovpn-user={user} ovpn-password={secret} skip-cert-import=no
-:delay 2s
-:local clients [/interface ovpn-client find]
-:if ([:len $clients] <= $oldCount) do={{ :error "OVPN import did not create an interface" }}
-:local newId [:pick $clients ([:len $clients] - 1)]
+:local newId ""
+:for attempt from=1 to=10 do={{
+    :local clients [/interface ovpn-client find]
+    :foreach clientId in=$clients do={{
+        :local wasPresent false
+        :foreach oldId in=$oldClients do={{
+            :if ($clientId = $oldId) do={{ :set wasPresent true }}
+        }}
+        :if (!$wasPresent) do={{
+            :if ([:len $newId] > 0) do={{ :error "OVPN import created multiple interfaces; inspect /interface ovpn-client" }}
+            :set newId $clientId
+        }}
+    }}
+    :if ([:len $newId] > 0) do={{ :break }}
+    :delay 500ms
+}}
+:if ([:len $newId] = 0) do={{ :error "OVPN import did not create an interface; check the profile and RouterOS log" }}
 /interface ovpn-client set $newId name=$interfaceName disabled=no
+:if ([/interface ovpn-client get $newId protocol] != "udp") do={{ :error "Imported OVPN client is not using UDP" }}
 :if ([:len [/ip route find where dst-address=$vpnNetwork and gateway=$interfaceName]] = 0) do={{
     /ip route add dst-address=$vpnNetwork gateway=$interfaceName comment="OpenVPN route to VPN clients"
 }}
