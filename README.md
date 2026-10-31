@@ -39,7 +39,7 @@ sudo python3 deploy-openvpn.py
 Также создаётся отдельный сертификат Windows-клиента. Он получает адрес `10.77.0.4` и маршруты к обеим LAN. Для MikroTik зарезервированы `10.77.0.2` и `10.77.0.3`; адреса динамических VPN-клиентов выдаются начиная с `10.77.0.10`, чтобы не пересекаться со статическими адресами. Клиентские профили создаются в каталоге, доступном только root:
 
 ```text
-/root/openvpn-clients/mikrotik-a.ovpn
+/root/openvpn-clients/mikrotik-a.ovpn     
 /root/openvpn-clients/mikrotik-b.ovpn
 /root/openvpn-clients/windows.ovpn
 ```
