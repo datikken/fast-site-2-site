@@ -70,7 +70,7 @@ sudo python3 monitor-openvpn.py --interval 10
 sudo python3 monitor-openvpn.py --once
 ```
 
-Монитор показывает состояние systemd-службы, время обновления status-файла и таблицу подключений `mikrotik-a`, `mikrotik-b`, `windows-client` и других клиентов с адресами и счётчиками трафика. Для другого status-файла укажите `--status-file`.
+Монитор показывает состояние systemd-службы, время обновления status-файла и таблицу подключений `mikrotik-a`, `mikrotik-b`, `windows-client` и других клиентов с адресами и счётчиками трафика. Путь к status-файлу определяется автоматически (включая `/run/openvpn-server/status-server.log`, используемый systemd в Ubuntu); для другого пути укажите `--status-file`.
 
 ### Подключить Windows-клиент
 
@@ -101,7 +101,7 @@ python3 ovpn_to_rsc.py mikrotik-b.ovpn --site b
 Дополнительные параметры:
 
 ```bash
-python3 ovpn_to_rsc.py mikrotik-a.ovpn --site a \
+python3 ovpn_to_rsc.py downl/mikrotik-a.ovpn --site a \
   --output mikrotik-a.rsc \
   --local-network 192.168.10.0/24 \
   --remote-network 192.168.20.0/24 \
@@ -115,10 +115,13 @@ python3 ovpn_to_rsc.py mikrotik-a.ovpn --site a \
 Для OpenVPN-клиента по UDP требуется RouterOS 7.17 или новее. Для каждой площадки загрузите на соответствующий роутер оба файла — `.ovpn` и созданный `.rsc` — в раздел **Files**, затем в терминале RouterOS выполните, подставив имя своего файла:
 
 ```routeros
+/file print
 /import file-name=mikrotik-a.rsc
 ```
 
 На MikroTik B импортируйте `mikrotik-b.rsc`. Если LAN-сети отличаются от значений по умолчанию, укажите фактические сети через `--local-network` и `--remote-network`.
+
+Если импорт остановился на строке `/interface/ovpn-client/import-ovpn-configuration` с ошибкой `input does not match any value of file-name`, RouterOS не нашёл `.ovpn`, имя которого указано в `.rsc`. Загрузите соответствующий профиль в **Files** и убедитесь, что имя совпадает точно (например, `mikrotik-a.ovpn` для профиля A). Сгенерированный скрипт также проверяет наличие профиля перед импортом и выводит ожидаемое имя файла.
 
 После импорта проверьте состояние интерфейса OVPN и таблицу маршрутизации. Для связи устройств между LAN должны быть подключены оба MikroTik; один роутер позволяет проверить только подключение к VDS.
 

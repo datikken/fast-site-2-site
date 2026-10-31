@@ -15,7 +15,10 @@ from datetime import datetime
 from pathlib import Path
 
 
-DEFAULT_STATUS_FILE = Path("/var/log/openvpn-status-server.log")
+DEFAULT_STATUS_FILES = (
+    Path("/run/openvpn-server/status-server.log"),
+    Path("/var/log/openvpn-status-server.log"),
+)
 SERVICE_CANDIDATES = (
     "openvpn-server@server.service",
     "openvpn@server.service",
@@ -189,17 +192,27 @@ def render_table(clients: dict[str, Client]) -> str:
     return "\n".join((format_row(headers), separator, *(format_row(row) for row in rows)))
 
 
-def monitor_once(status_file: Path, service_override: str | None) -> bool:
+def resolve_status_file(status_file: Path | None) -> Path:
+    if status_file is not None:
+        return status_file
+    available = [path for path in DEFAULT_STATUS_FILES if path.is_file()]
+    if not available:
+        return DEFAULT_STATUS_FILES[0]
+    return max(available, key=lambda path: path.stat().st_mtime)
+
+
+def monitor_once(status_file: Path | None, service_override: str | None) -> bool:
     service, state = find_service(service_override)
     service_label = service or service_override or "OpenVPN systemd unit"
     active = state == "active"
+    status_path = resolve_status_file(status_file)
 
     try:
-        contents = status_file.read_text(encoding="utf-8")
-        modified_timestamp = status_file.stat().st_mtime
+        contents = status_path.read_text(encoding="utf-8")
+        modified_timestamp = status_path.stat().st_mtime
     except OSError as error:
         print(f"OpenVPN service: {'ACTIVE' if active else state.upper()} ({service_label})")
-        print(f"Status file unavailable: {error}")
+        print(f"Status file unavailable ({status_path}): {error}")
         return False
 
     modified = datetime.fromtimestamp(modified_timestamp).astimezone()
@@ -208,7 +221,7 @@ def monitor_once(status_file: Path, service_override: str | None) -> bool:
 
     print(f"OpenVPN service: {'ACTIVE' if active else state.upper()} ({service_label})")
     print(
-        f"Status updated: {modified:%Y-%m-%d %H:%M:%S %Z} "
+        f"Status file: {status_path} | updated {modified:%Y-%m-%d %H:%M:%S %Z} "
         f"({age_seconds}s ago) | Connected clients: {len(clients)}"
     )
     print(render_table(clients))
@@ -217,7 +230,7 @@ def monitor_once(status_file: Path, service_override: str | None) -> bool:
     return active
 
 
-def watch(status_file: Path, service: str | None, interval: int) -> int:
+def watch(status_file: Path | None, service: str | None, interval: int) -> int:
     try:
         while True:
             if sys.stdout.isatty():
@@ -240,8 +253,11 @@ def main() -> int:
     parser.add_argument(
         "--status-file",
         type=Path,
-        default=DEFAULT_STATUS_FILE,
-        help=f"OpenVPN status log (default: {DEFAULT_STATUS_FILE})",
+        default=None,
+        help=(
+            "OpenVPN status log (default: auto-detect the most recently updated file "
+            f"from {', '.join(map(str, DEFAULT_STATUS_FILES))})"
+        ),
     )
     parser.add_argument(
         "--service",

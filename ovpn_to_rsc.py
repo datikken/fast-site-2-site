@@ -137,6 +137,7 @@ def build_script(
 :local localNetwork {local}
 :local remoteNetwork {remote}
 :local vpnNetwork {vpn_network}
+:if ([:len [/file find where name=$sourceFile]] = 0) do={{ :error ("Missing OVPN profile in Files: " . $sourceFile . ". Upload it using this exact filename, then retry.") }}
 :local existing [/interface ovpn-client find where name=$interfaceName]
 :if ([:len $existing] > 0) do={{ :error ("OVPN interface already exists: " . $interfaceName) }}
 :local oldCount [:len [/interface ovpn-client find]]
