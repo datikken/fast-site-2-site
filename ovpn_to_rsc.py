@@ -101,9 +101,16 @@ def build_script(
     password: str,
     local_network: ipaddress.IPv4Network,
     remote_network: ipaddress.IPv4Network,
+    additional_networks: tuple[ipaddress.IPv4Network, ...] = (),
 ) -> str:
     if local_network.overlaps(remote_network):
         raise ProfileError("Local and remote LAN networks must not overlap.")
+    if any(
+        network.overlaps(existing)
+        for index, network in enumerate(additional_networks)
+        for existing in (local_network, remote_network, *additional_networks[:index])
+    ):
+        raise ProfileError("Additional LAN networks must not overlap each other or the site LANs.")
 
     profile = routeros_quote(profile_name)
     interface = routeros_quote(interface_name)
@@ -128,6 +135,37 @@ def build_script(
     forward_windows_out_comment = routeros_quote(
         f"OpenVPN forward {local_network} to Windows clients"
     )
+    additional_routes = []
+    additional_nat_rules = []
+    additional_forward_rules = []
+    for network in additional_networks:
+        remote_additional = routeros_quote(str(network))
+        route_additional_comment = routeros_quote(
+            f"OpenVPN {interface_name} to {network}"
+        )
+        nat_out_comment = routeros_quote(f"OpenVPN no NAT {local_network} to {network}")
+        nat_in_comment = routeros_quote(f"OpenVPN no NAT {network} to {local_network}")
+        forward_out_comment = routeros_quote(f"OpenVPN forward {local_network} to {network}")
+        forward_in_comment = routeros_quote(f"OpenVPN forward {network} to {local_network}")
+        additional_routes.append(f""":if ([:len [/ip route find where dst-address={remote_additional} and gateway=$interfaceName]] = 0) do={{
+    /ip route add dst-address={remote_additional} gateway=$interfaceName comment={route_additional_comment}
+}}""")
+        additional_nat_rules.extend((
+            f""":if ([:len [/ip firewall nat find where comment={nat_out_comment}]] = 0) do={{
+    /ip firewall nat add chain=srcnat action=accept src-address=$localNetwork dst-address={remote_additional} comment={nat_out_comment} place-before=0
+}}""",
+            f""":if ([:len [/ip firewall nat find where comment={nat_in_comment}]] = 0) do={{
+    /ip firewall nat add chain=srcnat action=accept src-address={remote_additional} dst-address=$localNetwork comment={nat_in_comment} place-before=0
+}}""",
+        ))
+        additional_forward_rules.extend((
+            f""":if ([:len [/ip firewall filter find where comment={forward_out_comment}]] = 0) do={{
+    /ip firewall filter add chain=forward action=accept src-address=$localNetwork dst-address={remote_additional} comment={forward_out_comment} place-before=0
+}}""",
+            f""":if ([:len [/ip firewall filter find where comment={forward_in_comment}]] = 0) do={{
+    /ip firewall filter add chain=forward action=accept src-address={remote_additional} dst-address=$localNetwork comment={forward_in_comment} place-before=0
+}}""",
+        ))
 
     return f"""# RouterOS 7.17+ is required for OpenVPN over UDP.
 # Upload {profile_name} to the router's Files list before importing this script.
@@ -167,6 +205,7 @@ def build_script(
 :if ([:len [/ip route find where dst-address=$remoteNetwork and gateway=$interfaceName]] = 0) do={{
     /ip route add dst-address=$remoteNetwork gateway=$interfaceName comment={route_comment}
 }}
+{chr(10).join(additional_routes)}
 :if ([:len [/ip firewall nat find where comment={nat_comment}]] = 0) do={{
     /ip firewall nat add chain=srcnat action=accept src-address=$localNetwork dst-address=$remoteNetwork comment={nat_comment} place-before=0
 }}
@@ -176,6 +215,7 @@ def build_script(
 :if ([:len [/ip firewall nat find where comment={nat_windows_in_comment}]] = 0) do={{
     /ip firewall nat add chain=srcnat action=accept src-address=$vpnNetwork dst-address=$localNetwork comment={nat_windows_in_comment} place-before=0
 }}
+{chr(10).join(additional_nat_rules)}
 :if ([:len [/ip firewall filter find where comment={forward_out_comment}]] = 0) do={{
     /ip firewall filter add chain=forward action=accept src-address=$localNetwork dst-address=$remoteNetwork comment={forward_out_comment} place-before=0
 }}
@@ -188,6 +228,7 @@ def build_script(
 :if ([:len [/ip firewall filter find where comment={forward_windows_out_comment}]] = 0) do={{
     /ip firewall filter add chain=forward action=accept src-address=$localNetwork dst-address=$vpnNetwork comment={forward_windows_out_comment} place-before=0
 }}
+{chr(10).join(additional_forward_rules)}
 """
 
 
@@ -209,6 +250,12 @@ def main() -> int:
     )
     parser.add_argument("--local-network", help="Local LAN CIDR (defaults to the selected project site)")
     parser.add_argument("--remote-network", help="Remote LAN CIDR (defaults to the selected project site)")
+    parser.add_argument(
+        "--additional-network",
+        action="append",
+        default=[],
+        help="Additional routed LAN CIDR; may be supplied more than once",
+    )
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files")
     args = parser.parse_args()
 
@@ -218,10 +265,16 @@ def main() -> int:
         default_local, default_remote = SITE_NETWORKS[args.site]
         local_network = ipaddress.ip_network(args.local_network or str(default_local), strict=True)
         remote_network = ipaddress.ip_network(args.remote_network or str(default_remote), strict=True)
+        additional_networks = tuple(
+            ipaddress.ip_network(network, strict=True)
+            for network in args.additional_network
+        )
         if not isinstance(local_network, ipaddress.IPv4Network) or not isinstance(
             remote_network, ipaddress.IPv4Network
         ):
             raise ProfileError("LAN networks must be IPv4.")
+        if any(not isinstance(network, ipaddress.IPv4Network) for network in additional_networks):
+            raise ProfileError("Additional LAN networks must be IPv4.")
 
         interface_name = args.interface or f"ovpn-vds-{args.site}"
         if not SAFE_NAME.fullmatch(interface_name):
@@ -252,6 +305,7 @@ def main() -> int:
             password=password,
             local_network=local_network,
             remote_network=remote_network,
+            additional_networks=additional_networks,
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(script, encoding="utf-8", newline="\r\n")
